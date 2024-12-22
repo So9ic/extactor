@@ -1,60 +1,84 @@
 import requests
 from bs4 import BeautifulSoup
-import time
-import string
-from github import Github
-import json
+import requests
+import os
 
-class GitHubHandler:
-    def __init__(self, token, owner, repo):
-        self.github = Github(token)
-        self.repo = self.github.get_user(owner).get_repo(repo)
+# GitHub configuration
+GITHUB_USERNAME = "So9ic"
+GITHUB_REPO = "extactor"
+GITHUB_TOKEN = "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"
+BASE_URL = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents"
 
-    def get_file_content(self, filename):
-        """Get file content from GitHub"""
-        try:
-            file_content = self.repo.get_contents(filename)
-            return file_content.decoded_content.decode('utf-8'), file_content.sha
-        except Exception as e:
-            print(f"Error reading {filename} from GitHub: {str(e)}")
-            return None, None
+HEADERS = {
+    "Authorization": f"token {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github.v3+json"
+}
 
-    def update_file(self, filename, content, sha):
-        """Update file content on GitHub"""
-        try:
-            self.repo.update_file(
-                filename,
-                f"Update {filename}",
-                content,
-                sha
-            )
-            return True
-        except Exception as e:
-            print(f"Error updating {filename} on GitHub: {str(e)}")
-            return False
+def get_file_content(file_name):
+    """Fetch file content from GitHub repository."""
+    url = f"{BASE_URL}/{file_name}"
+    response = requests.get(url, headers=HEADERS)
+    if response.status_code == 200:
+        content = response.json()["content"]
+        return requests.utils.unquote(content).encode("latin1").decode("utf-8")
+    elif response.status_code == 404:
+        return None
+    else:
+        print(f"Error fetching {file_name}: {response.status_code}, {response.text}")
+        return None
 
-def get_last_processed_word(github_handler):
-    """Read the last processed word from tracking.txt"""
-    content, _ = github_handler.get_file_content('tracking.txt')
+def upload_file(file_name, content, message="Update file"):
+    """Upload or update a file in the GitHub repository."""
+    url = f"{BASE_URL}/{file_name}"
+    existing_content = get_file_content(file_name)
+    data = {
+        "message": message,
+        "content": requests.utils.quote(content.encode("utf-8")),
+        "branch": "main"
+    }
+    if existing_content:
+        # Get the SHA for updating the file
+        sha = requests.get(url, headers=HEADERS).json()["sha"]
+        data["sha"] = sha
+
+    response = requests.put(url, headers=HEADERS, json=data)
+    if response.status_code in [200, 201]:
+        print(f"{file_name} uploaded successfully.")
+    else:
+        print(f"Error uploading {file_name}: {response.status_code}, {response.text}")
+
+def get_last_processed_word():
+    """Retrieve the last processed word from GitHub."""
+    content = get_file_content("tracking.txt")
     return content.strip() if content else None
 
-def update_tracking_word(github_handler, word):
-    """Update tracking.txt with current word"""
-    _, sha = github_handler.get_file_content('tracking.txt')
-    return github_handler.update_file('tracking.txt', word, sha)
+def update_tracking_word(word):
+    """Update tracking.txt with the last processed word."""
+    upload_file("tracking.txt", word, message=f"Updated tracking word to {word}")
 
-def read_words_from_file(github_handler):
-    """Read words from words.txt"""
-    content, _ = github_handler.get_file_content('words.txt')
-    return [line.strip() for line in content.split('\n') if line.strip()] if content else []
+def read_words_from_file():
+    """Retrieve words from words.txt stored in GitHub."""
+    content = get_file_content("words.txt")
+    return [line.strip() for line in content.splitlines()] if content else []
 
-def entry_exists(github_handler, word, pos, meaning):
-    """Check if entry already exists in dictionary.txt"""
-    content, _ = github_handler.get_file_content('dictionary.txt')
+def entry_exists(word, pos, meaning):
+    """Check if an entry exists in dictionary.txt."""
+    content = get_file_content("dictionary.txt")
     if content:
         entry = f"{word}: ({pos}) {meaning}"
-        return any(line.strip() == entry.strip() for line in content.split('\n'))
+        return entry in content
     return False
+
+def save_to_file(word, categorized_meanings):
+    """Save word and its meanings to dictionary.txt."""
+    content = get_file_content("dictionary.txt")
+    existing_data = content + "\n" if content else ""
+    new_entries = []
+    for pos, meaning in categorized_meanings.items():
+        if not entry_exists(word, pos, meaning):
+            new_entries.append(f"{word}: ({pos}) {meaning}")
+    updated_content = existing_data + "\n".join(new_entries)
+    upload_file("dictionary.txt", updated_content, message="Updated dictionary.txt")
 
 def extract_first_meaning_from_li(li_element):
     """Extract only the first meaning from a list item."""
@@ -65,13 +89,13 @@ def extract_first_meaning_from_li(li_element):
             if meaning_div:
                 inner_div = meaning_div.find('div')
                 if inner_div:
-                    meaning = inner_div.get_text(strip=True)
-                    return meaning
+                    return inner_div.get_text(strip=True)
     except Exception as e:
         print(f"Error extracting meaning: {str(e)}")
     return None
 
 def get_word_meanings(word):
+    """Fetch word meanings from dictionary.com."""
     url = f"https://www.dictionary.com/browse/{word}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -80,6 +104,7 @@ def get_word_meanings(word):
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
+        from bs4 import BeautifulSoup
         soup = BeautifulSoup(response.text, 'html.parser')
 
         word_element = soup.find('h1')
@@ -109,48 +134,21 @@ def get_word_meanings(word):
         print(f"Error fetching {word}: {str(e)}")
         return None
 
-def save_to_file(github_handler, word, categorized_meanings):
-    """Append new entries to dictionary.txt"""
-    content, sha = github_handler.get_file_content('dictionary.txt')
-    new_entries = []
-    
-    for pos, meaning in categorized_meanings.items():
-        meaning = ' '.join(meaning.split())
-        if not entry_exists(github_handler, word, pos, meaning):
-            new_entries.append(f"{word}: ({pos}) {meaning}")
-    
-    if new_entries:
-        if content:
-            updated_content = content + '\n' + '\n'.join(new_entries)
-        else:
-            updated_content = '\n'.join(new_entries)
-        return github_handler.update_file('dictionary.txt', updated_content, sha)
-    return False
-
 def main():
-    # GitHub configuration
-    GITHUB_TOKEN = "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"  # Replace with your actual token
-    GITHUB_REPO_OWNER = "So9ic"
-    GITHUB_REPO_NAME = "extactor"
-    
-    # Initialize GitHub handler
-    github_handler = GitHubHandler(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
-
     # Read words from file
-    print("Reading words from GitHub...")
-    words = read_words_from_file(github_handler)
+    words = read_words_from_file()
     if not words:
         print("No words found in words.txt")
         return
 
     # Get last processed word
-    last_word = get_last_processed_word(github_handler)
+    last_word = get_last_processed_word()
     start_index = 0
 
     # Find starting point
     if last_word:
         try:
-            start_index = words.index(last_word) + 1  # Start from next word
+            start_index = words.index(last_word)
             print(f"Resuming from word: {last_word}")
         except ValueError:
             print(f"Last processed word {last_word} not found in words.txt, starting from beginning")
@@ -158,21 +156,16 @@ def main():
     # Process words
     for word in words[start_index:]:
         print(f"Processing word: {word}")
-        update_tracking_word(github_handler, word)
+        update_tracking_word(word)
 
         result = get_word_meanings(word)
         if result:
             found_word, categorized_meanings = result
             if categorized_meanings:
-                if save_to_file(github_handler, found_word, categorized_meanings):
-                    print(f"Added {found_word} with {len(categorized_meanings)} parts of speech")
-                else:
-                    print(f"No new meanings added for {word}")
+                save_to_file(found_word, categorized_meanings)
+                print(f"Added {found_word} with {len(categorized_meanings)} parts of speech")
             else:
                 print(f"No meanings found for {word}")
-        
-        # Add a delay to avoid rate limiting
-        time.sleep(2)
 
 if __name__ == "__main__":
     main()
