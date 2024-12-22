@@ -7,7 +7,7 @@ import base64
 import json
 
 # GitHub configuration
-GITHUB_TOKEN = "YOUR_NEW_TOKEN"  # Replace with your new token
+GITHUB_TOKEN = "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"  # Replace with your new token
 GITHUB_USERNAME = "So9ic"
 GITHUB_REPO = "extactor"
 GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}"
