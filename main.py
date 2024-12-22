@@ -143,9 +143,9 @@ def save_to_file(github, word, categorized_meanings):
 
 def main():
     # GitHub configuration
-    GITHUB_TOKEN = "ghp_MrwBh8Ur9wI27x3x5aqqAHdpxxxxxxxxx"
-    GITHUB_REPO_OWNER = "so9ic"
-    GITHUB_REPO_NAME = "extractor"
+    GITHUB_TOKEN = "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"
+    GITHUB_REPO_OWNER = "So9ic"
+    GITHUB_REPO_NAME = "extactor"
     
     github = GitHubAPI(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
 
@@ -182,9 +182,6 @@ def main():
                     print(f"No new meanings added for {word}")
             else:
                 print(f"No meanings found for {word}")
-        
-        # Add a delay to avoid rate limiting
-        time.sleep(2)
 
 if __name__ == "__main__":
     main()
