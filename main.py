@@ -1,6 +1,5 @@
-from bs4 import BeautifulSoup
 import requests
-import os
+import base64
 
 # Constants
 GITHUB_USERNAME = "So9ic"
@@ -21,7 +20,8 @@ def get_last_processed_word():
 
     if response.status_code == 200:
         content = response.json()
-        return requests.get(content['download_url']).text.strip()
+        file_content = base64.b64decode(content['content']).decode("utf-8").strip()
+        return file_content
     elif response.status_code == 404:
         print("tracking.txt not found. Starting fresh.")
         return None
@@ -35,11 +35,11 @@ def update_tracking_word(word):
     url = f"{BASE_URL}/tracking.txt"
     try:
         response = requests.get(url, headers=HEADERS)
-        sha = response.json().get('sha', None) if response.status_code == 200 else None
+        sha = response.json().get('sha') if response.status_code == 200 else None
 
         data = {
             "message": f"Update tracking word to {word}",
-            "content": word.encode("utf-8").decode("latin1").encode("base64").decode(),
+            "content": base64.b64encode(word.encode("utf-8")).decode("utf-8"),
             "sha": sha,
         }
         put_response = requests.put(url, headers=HEADERS, json=data)
@@ -65,24 +65,24 @@ def save_to_file(word, categorized_meanings):
     url = f"{BASE_URL}/dictionary.txt"
     try:
         response = requests.get(url, headers=HEADERS)
-        sha = response.json().get('sha', None) if response.status_code == 200 else None
+        sha = response.json().get('sha') if response.status_code == 200 else None
 
         # Prepare the new content
+        existing_content = ""
+        if response.status_code == 200:
+            existing_content = base64.b64decode(response.json()['content']).decode("utf-8")
+
         new_entries = []
         for pos, meaning in categorized_meanings.items():
             meaning = ' '.join(meaning.split())
             new_entries.append(f"{word}: ({pos}) {meaning}\n")
 
-        if response.status_code == 200:
-            existing_content = requests.get(response.json()['download_url']).text
-            new_content = existing_content + ''.join(new_entries)
-        else:
-            new_content = ''.join(new_entries)
+        new_content = existing_content + ''.join(new_entries)
 
         # Upload the updated content
         data = {
             "message": f"Add/update dictionary entry for {word}",
-            "content": new_content.encode("utf-8").decode("latin1").encode("base64").decode(),
+            "content": base64.b64encode(new_content.encode("utf-8")).decode("utf-8"),
             "sha": sha,
         }
         put_response = requests.put(url, headers=HEADERS, json=data)
@@ -180,4 +180,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
