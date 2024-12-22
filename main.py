@@ -4,9 +4,6 @@ import base64
 import json
 import time
 import string
-from keep_alive import keep_alive
-
-keep_alive()
 
 class GitHubAPI:
     def __init__(self, token, owner, repo):
@@ -14,25 +11,33 @@ class GitHubAPI:
         self.owner = owner
         self.repo = repo
         self.headers = {
-            'Authorization': f'Bearer {token}',  # Changed to Bearer token format
+            'Authorization': f'Bearer {token}',
             'Accept': 'application/vnd.github.v3+json'
         }
         self.base_url = f'https://api.github.com/repos/{owner}/{repo}/contents'
+        self.raw_base_url = f'https://raw.githubusercontent.com/{owner}/{repo}/main'
 
     def get_file_content(self, filename):
-        """Get file content from GitHub"""
+        """Get file content from GitHub, falling back to raw URL for large files"""
         try:
+            # First try the raw URL
             response = requests.get(
-                f'{self.base_url}/{filename}',
-                headers=self.headers,
-                params={'ref': 'main'}  # Explicitly specify main branch
+                f'{self.raw_base_url}/{filename}',
+                headers={'Authorization': f'Bearer {self.token}'}
             )
             response.raise_for_status()
             
             if response.status_code == 200:
-                content = response.json()
-                if content.get('content'):
-                    return base64.b64decode(content['content']).decode('utf-8'), content.get('sha')
+                content = response.text
+                # For raw content, we still need the SHA for updates
+                sha_response = requests.get(
+                    f'{self.base_url}/{filename}',
+                    headers=self.headers,
+                    params={'ref': 'main'}
+                )
+                sha = sha_response.json().get('sha') if sha_response.status_code == 200 else None
+                return content, sha
+            
             print(f"Response status: {response.status_code}")
             print(f"Response content: {response.text}")
             return None, None
@@ -47,10 +52,9 @@ class GitHubAPI:
             data = {
                 'message': f'Update {filename}',
                 'content': base64.b64encode(content.encode()).decode(),
-                'branch': 'main',  # Explicitly specify main branch
+                'branch': 'main',
+                'sha': sha
             }
-            if sha:
-                data['sha'] = sha
 
             response = requests.put(
                 f'{self.base_url}/{filename}',
@@ -157,16 +161,11 @@ def save_to_file(github, word, categorized_meanings):
 
 def main():
     # GitHub configuration
-    GITHUB_TOKEN = "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"
+    GITHUB_TOKEN = "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"  # Replace with your actual token
     GITHUB_REPO_OWNER = "So9ic"
     GITHUB_REPO_NAME = "extactor"
-
+    
     github = GitHubAPI(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
-    print("Testing GitHub connection...")
-    content, sha = github.get_file_content('words.txt')
-    if content is None:
-        print("Failed to connect to GitHub. Please check your token and repository settings.")
-        return
 
     # Read words from file
     words = read_words_from_file(github)
@@ -201,6 +200,9 @@ def main():
                     print(f"No new meanings added for {word}")
             else:
                 print(f"No meanings found for {word}")
+        
+        # Add a delay to avoid rate limiting
+        time.sleep(2)
 
 if __name__ == "__main__":
     main()
