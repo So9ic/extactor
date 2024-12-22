@@ -4,6 +4,9 @@ import base64
 import json
 import time
 import string
+from keep_alive import keep_alive
+
+keep_alive()
 
 class GitHubAPI:
     def __init__(self, token, owner, repo):
@@ -11,7 +14,7 @@ class GitHubAPI:
         self.owner = owner
         self.repo = repo
         self.headers = {
-            'Authorization': f'token {token}',
+            'Authorization': f'Bearer {token}',  # Changed to Bearer token format
             'Accept': 'application/vnd.github.v3+json'
         }
         self.base_url = f'https://api.github.com/repos/{owner}/{repo}/contents'
@@ -19,14 +22,23 @@ class GitHubAPI:
     def get_file_content(self, filename):
         """Get file content from GitHub"""
         try:
-            response = requests.get(f'{self.base_url}/{filename}', headers=self.headers)
+            response = requests.get(
+                f'{self.base_url}/{filename}',
+                headers=self.headers,
+                params={'ref': 'main'}  # Explicitly specify main branch
+            )
             response.raise_for_status()
-            content = response.json()
-            if content.get('content'):
-                return base64.b64decode(content['content']).decode('utf-8'), content.get('sha')
+            
+            if response.status_code == 200:
+                content = response.json()
+                if content.get('content'):
+                    return base64.b64decode(content['content']).decode('utf-8'), content.get('sha')
+            print(f"Response status: {response.status_code}")
+            print(f"Response content: {response.text}")
             return None, None
         except Exception as e:
             print(f"Error reading {filename} from GitHub: {str(e)}")
+            print(f"Full error response: {e.response.text if hasattr(e, 'response') else 'No response'}")
             return None, None
 
     def update_file(self, filename, content, sha=None):
@@ -35,6 +47,7 @@ class GitHubAPI:
             data = {
                 'message': f'Update {filename}',
                 'content': base64.b64encode(content.encode()).decode(),
+                'branch': 'main',  # Explicitly specify main branch
             }
             if sha:
                 data['sha'] = sha
@@ -48,6 +61,7 @@ class GitHubAPI:
             return True
         except Exception as e:
             print(f"Error updating {filename} on GitHub: {str(e)}")
+            print(f"Full error response: {e.response.text if hasattr(e, 'response') else 'No response'}")
             return False
 
 def get_last_processed_word(github):
@@ -146,8 +160,13 @@ def main():
     GITHUB_TOKEN = "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"
     GITHUB_REPO_OWNER = "So9ic"
     GITHUB_REPO_NAME = "extactor"
-    
+
     github = GitHubAPI(GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME)
+    print("Testing GitHub connection...")
+    content, sha = github.get_file_content('words.txt')
+    if content is None:
+        print("Failed to connect to GitHub. Please check your token and repository settings.")
+        return
 
     # Read words from file
     words = read_words_from_file(github)
