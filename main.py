@@ -2,10 +2,17 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import time
-import string
-from keep_alive import keep_alive
 
-keep_alive()
+# GitHub credentials
+GITHUB_TOKEN = "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"
+GITHUB_REPO_OWNER = "so9ic"
+GITHUB_REPO_NAME = "extactor"
+
+# GitHub API headers
+HEADERS = {
+    "Authorization": f"Bearer {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github.v3+json"
+}
 
 def get_last_processed_word():
     """Read the last processed word from tracking.txt"""
@@ -34,18 +41,10 @@ def read_words_from_file():
         print(f"Error reading words.txt: {str(e)}")
         return []
 
-def entry_exists(word, pos, meaning):
-    """Check if entry already exists in dictionary.txt"""
-    try:
-        if os.path.exists('dictionary.txt'):
-            with open('dictionary.txt', 'r', encoding='utf-8') as f:
-                entry = f"{word}: ({pos}) {meaning}"
-                for line in f:
-                    if line.strip() == entry.strip():
-                        return True
-    except Exception as e:
-        print(f"Error checking dictionary.txt: {str(e)}")
-    return False
+def entry_exists(content, word, pos, meaning):
+    """Check if entry already exists in the content of dictionary.txt"""
+    entry = f"{word}: ({pos}) {meaning}"
+    return entry.strip() in content
 
 def extract_first_meaning_from_li(li_element):
     """Extract only the first meaning from a list item."""
@@ -63,6 +62,7 @@ def extract_first_meaning_from_li(li_element):
     return None
 
 def get_word_meanings(word):
+    """Fetch meanings for a given word from dictionary.com"""
     url = f"https://www.dictionary.com/browse/{word}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -79,8 +79,8 @@ def get_word_meanings(word):
             return None
 
         sections = soup.find_all('section', class_='uLEIc6UAEiaBDDj6qSnO')
-
         categorized_meanings = {}
+
         for section in sections:
             pos_header = section.find('h2')
             if pos_header:
@@ -100,22 +100,59 @@ def get_word_meanings(word):
         print(f"Error fetching {word}: {str(e)}")
         return None
 
-def save_to_file(word, categorized_meanings):
-    """Append new entries to dictionary.txt"""
+def get_file_content_from_github(filename):
+    """Fetch file content from GitHub"""
+    url = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/contents/{filename}"
     try:
-        with open('dictionary.txt', 'a', encoding='utf-8') as f:
-            for pos, meaning in categorized_meanings.items():
-                meaning = ' '.join(meaning.split())
-                if not entry_exists(word, pos, meaning):
-                    f.write(f"{word}: ({pos}) {meaning}\n")
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("content"), data.get("sha")
+    except requests.RequestException as e:
+        print(f"Error fetching {filename} from GitHub: {str(e)}")
+        return None, None
+
+def update_file_on_github(filename, content, sha):
+    """Update file on GitHub"""
+    url = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/contents/{filename}"
+    try:
+        payload = {
+            "message": f"Update {filename}",
+            "content": content.encode("utf-8").decode("ascii"),
+            "sha": sha
+        }
+        response = requests.put(url, json=payload, headers=HEADERS)
+        response.raise_for_status()
+        print(f"Successfully updated {filename} on GitHub")
+    except requests.RequestException as e:
+        print(f"Error updating {filename} on GitHub: {str(e)}")
+
+def save_to_github(word, categorized_meanings):
+    """Save new entries to dictionary.txt on GitHub"""
+    filename = "dictionary.txt"
+    content, sha = get_file_content_from_github(filename)
+    if content is None:
+        print(f"Error: Unable to fetch {filename} from GitHub")
+        return
+
+    try:
+        decoded_content = content.encode("ascii").decode("utf-8")
+        updated_content = decoded_content
+
+        for pos, meaning in categorized_meanings.items():
+            if not entry_exists(decoded_content, word, pos, meaning):
+                entry = f"{word}: ({pos}) {meaning}\n"
+                updated_content += entry
+
+        if updated_content != decoded_content:
+            update_file_on_github(filename, updated_content, sha)
+        else:
+            print(f"No new entries to update for {word}")
+
     except Exception as e:
-        print(f"Error saving to dictionary.txt: {str(e)}")
+        print(f"Error saving to {filename} on GitHub: {str(e)}")
 
 def main():
-    # Create dictionary.txt if it doesn't exist
-    if not os.path.exists('dictionary.txt'):
-        open('dictionary.txt', 'w', encoding='utf-8').close()
-
     # Read words from file
     words = read_words_from_file()
     if not words:
@@ -126,7 +163,6 @@ def main():
     last_word = get_last_processed_word()
     start_index = 0
 
-    # Find starting point
     if last_word:
         try:
             start_index = words.index(last_word)
@@ -143,7 +179,7 @@ def main():
         if result:
             found_word, categorized_meanings = result
             if categorized_meanings:
-                save_to_file(found_word, categorized_meanings)
+                save_to_github(found_word, categorized_meanings)
                 print(f"Added {found_word} with {len(categorized_meanings)} parts of speech")
             else:
                 print(f"No meanings found for {word}")
