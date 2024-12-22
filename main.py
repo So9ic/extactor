@@ -1,101 +1,99 @@
-import requests
 from bs4 import BeautifulSoup
 import requests
 import os
 
-# GitHub configuration
+# Constants
 GITHUB_USERNAME = "So9ic"
 GITHUB_REPO = "extactor"
 GITHUB_TOKEN = "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"
 BASE_URL = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents"
-
+WORDS_FILE_URL = "https://raw.githubusercontent.com/So9ic/extactor/refs/heads/main/words.txt"
 HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
     "Accept": "application/vnd.github.v3+json"
 }
 
-def get_file_content(file_name):
-    """Fetch file content from GitHub repository."""
-    url = f"{BASE_URL}/{file_name}"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code == 200:
-        content = response.json()["content"]
-        return requests.utils.unquote(content).encode("latin1").decode("utf-8")
-    elif response.status_code == 404:
-        return None
-    else:
-        print(f"Error fetching {file_name}: {response.status_code}, {response.text}")
-        return None
-
-def upload_file(file_name, content, message="Update file"):
-    """Upload or update a file in the GitHub repository."""
-    url = f"{BASE_URL}/{file_name}"
-    existing_content = get_file_content(file_name)
-    data = {
-        "message": message,
-        "content": requests.utils.quote(content.encode("utf-8")),
-        "branch": "main"
-    }
-    if existing_content:
-        # Get the SHA for updating the file
-        sha = requests.get(url, headers=HEADERS).json()["sha"]
-        data["sha"] = sha
-
-    response = requests.put(url, headers=HEADERS, json=data)
-    if response.status_code in [200, 201]:
-        print(f"{file_name} uploaded successfully.")
-    else:
-        print(f"Error uploading {file_name}: {response.status_code}, {response.text}")
 
 def get_last_processed_word():
-    """Retrieve the last processed word from GitHub."""
-    content = get_file_content("tracking.txt")
-    return content.strip() if content else None
+    """Retrieve the last processed word from tracking.txt"""
+    url = f"{BASE_URL}/tracking.txt"
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code == 200:
+        content = response.json()
+        return requests.get(content['download_url']).text.strip()
+    elif response.status_code == 404:
+        print("tracking.txt not found. Starting fresh.")
+        return None
+    else:
+        print(f"Error fetching tracking.txt: {response.status_code}, {response.text}")
+        return None
+
 
 def update_tracking_word(word):
-    """Update tracking.txt with the last processed word."""
-    upload_file("tracking.txt", word, message=f"Updated tracking word to {word}")
+    """Update tracking.txt with the current word"""
+    url = f"{BASE_URL}/tracking.txt"
+    try:
+        response = requests.get(url, headers=HEADERS)
+        sha = response.json().get('sha', None) if response.status_code == 200 else None
+
+        data = {
+            "message": f"Update tracking word to {word}",
+            "content": word.encode("utf-8").decode("latin1").encode("base64").decode(),
+            "sha": sha,
+        }
+        put_response = requests.put(url, headers=HEADERS, json=data)
+        if put_response.status_code not in [200, 201]:
+            print(f"Error updating tracking.txt: {put_response.status_code}, {put_response.text}")
+    except Exception as e:
+        print(f"Error updating tracking.txt: {str(e)}")
+
 
 def read_words_from_file():
-    """Retrieve words from words.txt stored in GitHub."""
-    content = get_file_content("words.txt")
-    return [line.strip() for line in content.splitlines()] if content else []
+    """Fetch the words from the raw URL"""
+    try:
+        response = requests.get(WORDS_FILE_URL)
+        response.raise_for_status()
+        return [line.strip() for line in response.text.splitlines() if line.strip()]
+    except requests.RequestException as e:
+        print(f"Error fetching words.txt: {str(e)}")
+        return []
 
-def entry_exists(word, pos, meaning):
-    """Check if an entry exists in dictionary.txt."""
-    content = get_file_content("dictionary.txt")
-    if content:
-        entry = f"{word}: ({pos}) {meaning}"
-        return entry in content
-    return False
 
 def save_to_file(word, categorized_meanings):
-    """Save word and its meanings to dictionary.txt."""
-    content = get_file_content("dictionary.txt")
-    existing_data = content + "\n" if content else ""
-    new_entries = []
-    for pos, meaning in categorized_meanings.items():
-        if not entry_exists(word, pos, meaning):
-            new_entries.append(f"{word}: ({pos}) {meaning}")
-    updated_content = existing_data + "\n".join(new_entries)
-    upload_file("dictionary.txt", updated_content, message="Updated dictionary.txt")
-
-def extract_first_meaning_from_li(li_element):
-    """Extract only the first meaning from a list item."""
+    """Append new entries to dictionary.txt"""
+    url = f"{BASE_URL}/dictionary.txt"
     try:
-        span = li_element.find('span', class_='HGU9YJqWX_GVHkeeJhSH')
-        if span:
-            meaning_div = span.find('div', class_='NZKOFkdkcvYgD3lqOIJw')
-            if meaning_div:
-                inner_div = meaning_div.find('div')
-                if inner_div:
-                    return inner_div.get_text(strip=True)
+        response = requests.get(url, headers=HEADERS)
+        sha = response.json().get('sha', None) if response.status_code == 200 else None
+
+        # Prepare the new content
+        new_entries = []
+        for pos, meaning in categorized_meanings.items():
+            meaning = ' '.join(meaning.split())
+            new_entries.append(f"{word}: ({pos}) {meaning}\n")
+
+        if response.status_code == 200:
+            existing_content = requests.get(response.json()['download_url']).text
+            new_content = existing_content + ''.join(new_entries)
+        else:
+            new_content = ''.join(new_entries)
+
+        # Upload the updated content
+        data = {
+            "message": f"Add/update dictionary entry for {word}",
+            "content": new_content.encode("utf-8").decode("latin1").encode("base64").decode(),
+            "sha": sha,
+        }
+        put_response = requests.put(url, headers=HEADERS, json=data)
+        if put_response.status_code not in [200, 201]:
+            print(f"Error updating dictionary.txt: {put_response.status_code}, {put_response.text}")
     except Exception as e:
-        print(f"Error extracting meaning: {str(e)}")
-    return None
+        print(f"Error saving to dictionary.txt: {str(e)}")
+
 
 def get_word_meanings(word):
-    """Fetch word meanings from dictionary.com."""
+    """Scrape dictionary.com for word meanings"""
     url = f"https://www.dictionary.com/browse/{word}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -119,7 +117,6 @@ def get_word_meanings(word):
             pos_header = section.find('h2')
             if pos_header:
                 pos = pos_header.text.strip()
-
                 meaning_list = section.find('ol', class_='lpwbZIOD86qFKLHJ2ZfQ E53FcpmOYsLLXxtj5omt')
                 if meaning_list:
                     first_li = meaning_list.find('li', recursive=False)
@@ -134,26 +131,39 @@ def get_word_meanings(word):
         print(f"Error fetching {word}: {str(e)}")
         return None
 
+
+def extract_first_meaning_from_li(li_element):
+    """Extract only the first meaning from a list item."""
+    try:
+        span = li_element.find('span', class_='HGU9YJqWX_GVHkeeJhSH')
+        if span:
+            meaning_div = span.find('div', class_='NZKOFkdkcvYgD3lqOIJw')
+            if meaning_div:
+                inner_div = meaning_div.find('div')
+                if inner_div:
+                    meaning = inner_div.get_text(strip=True)
+                    return meaning
+    except Exception as e:
+        print(f"Error extracting meaning: {str(e)}")
+    return None
+
+
 def main():
-    # Read words from file
     words = read_words_from_file()
     if not words:
         print("No words found in words.txt")
         return
 
-    # Get last processed word
     last_word = get_last_processed_word()
     start_index = 0
 
-    # Find starting point
     if last_word:
         try:
             start_index = words.index(last_word)
             print(f"Resuming from word: {last_word}")
         except ValueError:
-            print(f"Last processed word {last_word} not found in words.txt, starting from beginning")
+            print(f"Last processed word {last_word} not found, starting from beginning")
 
-    # Process words
     for word in words[start_index:]:
         print(f"Processing word: {word}")
         update_tracking_word(word)
@@ -167,5 +177,7 @@ def main():
             else:
                 print(f"No meanings found for {word}")
 
+
 if __name__ == "__main__":
     main()
+
