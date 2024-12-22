@@ -129,7 +129,7 @@ def save_to_file(github_handler, word, categorized_meanings):
 
 def main():
     # GitHub configuration
-    GITHUB_TOKEN = "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"  # Replace with your actual token
+    GITHUB_TOKEN = "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"  # Replace with your actual token
     GITHUB_REPO_OWNER = "So9ic"
     GITHUB_REPO_NAME = "extactor"
     
