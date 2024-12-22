@@ -3,6 +3,9 @@ from bs4 import BeautifulSoup
 import os
 import time
 import string
+from keep_alive import keep_alive
+
+keep_alive()
 
 def get_last_processed_word():
     """Read the last processed word from tracking.txt"""
