@@ -3,5 +3,4 @@ beautifulsoup4
 emoji
 flask
 python-decouple==3.7
-pygithub
-aiohttp
+mysql-connector-python
