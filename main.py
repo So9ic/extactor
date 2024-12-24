@@ -3,6 +3,9 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import string
+from keep_alive import keep_alive
+
+keep_alive()
 
 # Database connection
 db = mysql.connector.connect(
