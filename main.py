@@ -1,82 +1,68 @@
+import mysql.connector
 import requests
 from bs4 import BeautifulSoup
-import os
 import time
 import string
-import base64
-import json
 
-# GitHub configuration
-GITHUB_TOKEN = "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"  # Replace with your new token
-GITHUB_USERNAME = "So9ic"
-GITHUB_REPO = "extactor"
-GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}"
+# Database connection
+db = mysql.connector.connect(
+    host="srv1473.hstgr.io",
+    user="u565640325_so9ic",
+    password="fM&eW~c?2Y",
+    database="u565640325_wtf"
+)
+cursor = db.cursor()
 
-def get_file_from_github(filename):
-    """Read file content from GitHub"""
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
-    }
+# Create tables if they don't exist
+def setup_database():
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS words (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            word VARCHAR(255) UNIQUE
+        )
+    """)
     
-    try:
-        response = requests.get(f"{GITHUB_API_BASE}/contents/{filename}", headers=headers)
-        if response.status_code == 200:
-            content = base64.b64decode(response.json()["content"]).decode("utf-8")
-            return content, response.json()["sha"]
-        return None, None
-    except Exception as e:
-        print(f"Error reading {filename} from GitHub: {str(e)}")
-        return None, None
-
-def update_file_on_github(filename, content, sha=None):
-    """Update file content on GitHub"""
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
-    }
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dictionary (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            word VARCHAR(255),
+            pos VARCHAR(50),
+            meaning TEXT,
+            UNIQUE KEY word_pos (word, pos)
+        )
+    """)
     
-    data = {
-        "message": f"Update {filename}",
-        "content": base64.b64encode(content.encode()).decode(),
-    }
-    
-    if sha:
-        data["sha"] = sha
-    
-    try:
-        response = requests.put(f"{GITHUB_API_BASE}/contents/{filename}", 
-                             headers=headers, 
-                             data=json.dumps(data))
-        return response.status_code == 200 or response.status_code == 201
-    except Exception as e:
-        print(f"Error updating {filename} on GitHub: {str(e)}")
-        return False
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tracking (
+            id INT PRIMARY KEY DEFAULT 1,
+            last_word VARCHAR(255)
+        )
+    """)
+    db.commit()
 
 def get_last_processed_word():
-    """Read the last processed word from tracking.txt on GitHub"""
-    content, _ = get_file_from_github("tracking.txt")
-    return content.strip() if content else None
+    cursor.execute("SELECT last_word FROM tracking WHERE id = 1")
+    result = cursor.fetchone()
+    return result[0] if result else None
 
 def update_tracking_word(word):
-    """Update tracking.txt on GitHub"""
-    _, sha = get_file_from_github("tracking.txt")
-    update_file_on_github("tracking.txt", word, sha)
+    cursor.execute("""
+        INSERT INTO tracking (id, last_word) 
+        VALUES (1, %s) 
+        ON DUPLICATE KEY UPDATE last_word = %s
+    """, (word, word))
+    db.commit()
 
 def read_words_from_file():
-    """Read words from words.txt URL"""
-    try:
-        response = requests.get("https://raw.githubusercontent.com/So9ic/extactor/refs/heads/main/words.txt")
-        response.raise_for_status()
-        return [line.strip() for line in response.text.splitlines() if line.strip()]
-    except Exception as e:
-        print(f"Error reading words.txt: {str(e)}")
-        return []
+    cursor.execute("SELECT word FROM words")
+    return [row[0] for row in cursor.fetchall()]
 
-def entry_exists(word, pos, meaning, current_content):
-    """Check if entry already exists in dictionary content"""
-    entry = f"{word}: ({pos}) {meaning}"
-    return entry in current_content
+def entry_exists(word, pos, meaning):
+    cursor.execute("""
+        SELECT 1 FROM dictionary 
+        WHERE word = %s AND pos = %s AND meaning = %s
+    """, (word, pos, meaning))
+    return cursor.fetchone() is not None
 
 def extract_first_meaning_from_li(li_element):
     """Extract only the first meaning from a list item."""
@@ -131,59 +117,61 @@ def get_word_meanings(word):
         print(f"Error fetching {word}: {str(e)}")
         return None
 
-def save_to_file(word, categorized_meanings):
-    """Append new entries to dictionary.txt on GitHub"""
-    content, sha = get_file_from_github("dictionary.txt")
-    current_content = content if content else ""
-    
-    new_entries = []
+def save_to_database_and_file(word, categorized_meanings):
+    """Save to both database and generate txt file"""
+    # Save to database
     for pos, meaning in categorized_meanings.items():
         meaning = ' '.join(meaning.split())
-        if not entry_exists(word, pos, meaning, current_content):
-            new_entries.append(f"{word}: ({pos}) {meaning}\n")
+        if not entry_exists(word, pos, meaning):
+            cursor.execute("""
+                INSERT IGNORE INTO dictionary (word, pos, meaning)
+                VALUES (%s, %s, %s)
+            """, (word, pos, meaning))
+    db.commit()
+
+    # Export entire database to txt file
+    cursor.execute("SELECT word, pos, meaning FROM dictionary ORDER BY word")
+    results = cursor.fetchall()
     
-    if new_entries:
-        updated_content = current_content + ''.join(new_entries)
-        update_file_on_github("dictionary.txt", updated_content, sha)
+    # Replace this path with your Hostinger path
+    with open('dictionary.txt', 'w', encoding='utf-8') as f:
+        for word, pos, meaning in results:
+            f.write(f"{word}: ({pos}) {meaning}\n")
 
 def main():
-    # Read words from file
+    setup_database()
+    
     words = read_words_from_file()
     if not words:
-        print("No words found in words.txt")
+        print("No words found in database")
         return
 
-    # Get last processed word
     last_word = get_last_processed_word()
     start_index = 0
 
-    # Find starting point
     if last_word:
         try:
-            start_index = words.index(last_word) + 1  # Start from next word
-            print(f"Resuming from after word: {last_word}")
+            start_index = words.index(last_word)
+            print(f"Resuming from word: {last_word}")
         except ValueError:
-            print(f"Last processed word {last_word} not found in words.txt, starting from beginning")
+            print(f"Last processed word {last_word} not found, starting from beginning")
 
-    # Process words
     for word in words[start_index:]:
         print(f"Processing word: {word}")
         update_tracking_word(word)
-        
-        # Add small delay to avoid hitting rate limits
-        time.sleep(1)
 
         result = get_word_meanings(word)
         if result:
             found_word, categorized_meanings = result
             if categorized_meanings:
-                save_to_file(found_word, categorized_meanings)
+                save_to_database_and_file(found_word, categorized_meanings)
                 print(f"Added {found_word} with {len(categorized_meanings)} parts of speech")
             else:
                 print(f"No meanings found for {word}")
-        
-        # Add small delay between words
-        time.sleep(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        cursor.close()
+        db.close()
